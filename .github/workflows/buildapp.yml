@@ -9,12 +9,12 @@ on:
         required: true
         type: string
       uyou_url:
-        description: "The Google Drive ID for uYou.deb"
-        default: "your_google_drive_file_id_here"
+        description: "The Google Drive URL or ID for uYou.deb"
+        default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
         required: true
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to the decrypted YouTube ipa"
+        description: "Direct URL to the decrypted YouTube ipa. The version of YouTube will be detected automatically."
         default: ""
         required: true
         type: string
@@ -61,15 +61,14 @@ jobs:
         id: brew_cache
         uses: tecolicom/actions-use-homebrew-tools@v1.2
         with:
-          tools: ldid dpkg make
+          tools: ldid dpkg make python3
           cache: yes
 
       - name: Install Dependencies
         if: steps.brew_cache.outputs.cache-hit != 'true'
-        run: brew install ldid dpkg make
-
-      - name: Install gdown
-        run: pip install gdown
+        run: |
+          brew install ldid dpkg make python3
+          pip3 install gdown
 
       - name: Set PATH environment variable
         run: echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
@@ -84,7 +83,7 @@ jobs:
 
       - name: Caching SDK
         id: SDK
-        uses: actions/cache@v3 # downgraded from v4 to v3
+        uses: actions/cache@v4
         env:
           cache-name: iOS-16.5-SDK
         with:
@@ -115,6 +114,18 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
+      - name: Prepare uYou.deb from Google Drive
+        id: prepare_deb
+        run: |
+          echo "Input URL: ${{ inputs.uyou_url }}"
+          if echo "${{ inputs.uyou_url }}" | grep -q 'drive.google.com'; then
+            GDRIVE_ID=$(echo "${{ inputs.uyou_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
+          else
+            GDRIVE_ID="${{ inputs.uyou_url }}"
+          fi
+          echo "Google Drive ID is: $GDRIVE_ID"
+          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
+
       - name: Prepare YouTube iPA
         id: prepare_youtube
         run: |
@@ -130,19 +141,13 @@ jobs:
           THEOS: ${{ github.workspace }}/theos
           YOUTUBE_URL: ${{ inputs.decrypted_youtube_url }}
 
-      - name: Download uYou.deb from Google Drive
-        run: |
-          gdown --id $UYOU_ID -O main/uYou.deb
-        env:
-          UYOU_ID: ${{ inputs.uyou_url }}
-
       - name: Fix compiling & Build Package
         id: build_package
         run: |
           mkdir -p theos/lib/iphone/rootless
           cd ${{ github.workspace }}/main
-          sed -i '' "26s#.*#DISPLAY_NAME = ${{ env.APP_NAME }}#g" Makefile
           sed -i '' "27s#.*#BUNDLE_ID = ${{ env.BUNDLE_ID }}#g" Makefile
+          sed -i '' "26s#.*#DISPLAY_NAME = ${{ env.APP_NAME }}#g" Makefile
           make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1
           echo "package=$(ls -t packages | head -n1)" >>$GITHUB_OUTPUT
           echo -e "==> \033[1mSHASUM256: $(shasum -a 256 packages/*.ipa | cut -f1 -d' ')\033[0m"
@@ -150,6 +155,7 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
           UYOU_VERSION: ${{ inputs.uyou_version }}
+          UYOU_URL: ${{ inputs.uyou_url }}
           BUNDLE_ID: ${{ inputs.bundle_id }}
           APP_NAME: ${{ inputs.app_name }}
 
