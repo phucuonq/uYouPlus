@@ -126,16 +126,49 @@ jobs:
           echo "Google Drive ID is: $GDRIVE_ID"
           gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
 
+          FILE_TYPE=$(file --brief --mime-type main/uYou.deb)
+          echo "Detected uYou.deb file type: $FILE_TYPE"
+
+          if [[ "$FILE_TYPE" == "application/zip" ]]; then
+            echo "File is zip, extracting..."
+            unzip -q main/uYou.deb -d main/unzipped_deb/
+            DEB_FOUND=$(find main/unzipped_deb/ -name "*.deb" | head -n1)
+            if [[ -n "$DEB_FOUND" ]]; then
+              mv "$DEB_FOUND" main/uYou.deb
+            else
+              echo "No .deb found in zip archive"
+              exit 1
+            fi
+          fi
+
       - name: Prepare YouTube iPA
         id: prepare_youtube
         run: |
           wget "$YOUTUBE_URL" --no-verbose -O main/YouTube.ipa
-          cd ${{ github.workspace }}/main
-          mv YouTube.ipa YouTube.zip
-          unzip -q YouTube.zip
-          youtube_version=$(defaults read "$(pwd)/Payload/YouTube.app/Info" CFBundleVersion)
+
+          FILE_TYPE=$(file --brief --mime-type main/YouTube.ipa)
+          echo "Detected YouTube file type: $FILE_TYPE"
+
+          if [[ "$FILE_TYPE" == "application/zip" ]]; then
+            echo "File is zip, extracting..."
+            unzip -q main/YouTube.ipa -d main/unzipped_ipa/
+            IPA_FOUND=$(find main/unzipped_ipa/ -name "*.ipa" | head -n1)
+            if [[ -n "$IPA_FOUND" ]]; then
+              mv "$IPA_FOUND" main/YouTube.ipa
+            else
+              echo "No .ipa found, trying Payload fallback..."
+              mv main/YouTube.ipa main/YouTube.zip
+              unzip -q main/YouTube.zip
+            fi
+          else
+            cd main
+            mv YouTube.ipa YouTube.zip
+            unzip -q YouTube.zip
+          fi
+
+          youtube_version=$(defaults read "$(pwd)/main/Payload/YouTube.app/Info" CFBundleVersion)
           echo "==> YouTube v$youtube_version downloaded!"
-          sed -i '' "17s#.*#YOUTUBE_VERSION = ${youtube_version}#g" Makefile
+          sed -i '' "17s#.*#YOUTUBE_VERSION = ${youtube_version}#g" main/Makefile
           echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
         env:
           THEOS: ${{ github.workspace }}/theos
