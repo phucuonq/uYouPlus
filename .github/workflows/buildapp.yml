@@ -1,6 +1,3 @@
-# Original idea by @ISnackable. Thanks to him for handling the hardest parts!
-# https://github.com/ISnackable/CercubePlus/blob/main/.github/workflows/Build.yml
-
 name: Build and Release uYouPlus
 
 on:
@@ -12,12 +9,12 @@ on:
         required: true
         type: string
       uyou_url:
-        description: "The URL for download uYou"
-        default: "https://something.url/uyou.deb"
-        required: false
+        description: "The Google Drive ID for uYou.deb"
+        default: "your_google_drive_file_id_here"
+        required: true
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to the decrypted YouTube ipa. The version of YouTube will be detected automatically."
+        description: "Direct URL to the decrypted YouTube ipa"
         default: ""
         required: true
         type: string
@@ -71,6 +68,9 @@ jobs:
         if: steps.brew_cache.outputs.cache-hit != 'true'
         run: brew install ldid dpkg make
 
+      - name: Install gdown
+        run: pip install gdown
+
       - name: Set PATH environment variable
         run: echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
@@ -84,7 +84,7 @@ jobs:
 
       - name: Caching SDK
         id: SDK
-        uses: actions/cache@v4
+        uses: actions/cache@v3 # downgraded from v4 to v3
         env:
           cache-name: iOS-16.5-SDK
         with:
@@ -126,27 +126,30 @@ jobs:
           echo "==> YouTube v$youtube_version downloaded!"
           sed -i '' "17s#.*#YOUTUBE_VERSION = ${youtube_version}#g" Makefile
           echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
-
         env:
           THEOS: ${{ github.workspace }}/theos
           YOUTUBE_URL: ${{ inputs.decrypted_youtube_url }}
+
+      - name: Download uYou.deb from Google Drive
+        run: |
+          gdown --id $UYOU_ID -O main/uYou.deb
+        env:
+          UYOU_ID: ${{ inputs.uyou_url }}
 
       - name: Fix compiling & Build Package
         id: build_package
         run: |
           mkdir -p theos/lib/iphone/rootless
           cd ${{ github.workspace }}/main
-          sed -i '' "27s#.*#BUNDLE_ID = ${{ env.BUNDLE_ID }}#g" Makefile
           sed -i '' "26s#.*#DISPLAY_NAME = ${{ env.APP_NAME }}#g" Makefile
+          sed -i '' "27s#.*#BUNDLE_ID = ${{ env.BUNDLE_ID }}#g" Makefile
           make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1
           echo "package=$(ls -t packages | head -n1)" >>$GITHUB_OUTPUT
           echo -e "==> \033[1mSHASUM256: $(shasum -a 256 packages/*.ipa | cut -f1 -d' ')\033[0m"
           echo -e "==> \033[1mBundle ID: ${{ env.BUNDLE_ID }}\033[0m"
-
         env:
           THEOS: ${{ github.workspace }}/theos
           UYOU_VERSION: ${{ inputs.uyou_version }}
-          UYOU_URL: ${{ inputs.uyou_url }}
           BUNDLE_ID: ${{ inputs.bundle_id }}
           APP_NAME: ${{ inputs.app_name }}
 
