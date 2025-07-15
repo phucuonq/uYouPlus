@@ -58,6 +58,7 @@ before-all::
 		rm -rf $(UYOU_PATH)/*; \
 		$(PRINT_FORMAT_BLUE) "Downloading uYou"; \
 	fi
+
 before-all::
 	@if [[ ! -f $(UYOU_DEB) && -n $(UYOU_URL) ]]; then \
 		curl -s $(UYOU_URL) -o $(UYOU_DEB); \
@@ -74,5 +75,6 @@ before-all::
 	fi;
 else
 before-package::
-	@mkdir -p $(THEOS_STAGING_DIR)/Library/Application\ Support; cp -r Localizations/uYouPlus.bundle $(THEOS_STAGING_DIR)/Library/Application\ Support/
+	@mkdir -p $(THEOS_STAGING_DIR)/Library/Application\ Support; \
+	cp -r Localizations/uYouPlus.bundle $(THEOS_STAGING_DIR)/Library/Application\ Support/
 endif
