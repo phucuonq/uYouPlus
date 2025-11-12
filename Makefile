@@ -61,29 +61,11 @@ UYOU_BUNDLE = $(UYOU_PATH)/Library/Application\ Support/uYouBundle.bundle
 internal-clean::
 	@rm -rf $(UYOU_PATH)/*
 
-# KHỐI LỆNH ĐÃ ĐƯỢC XÂY DỰNG LẠI (CÚ PHÁP SHELL POSIX AN TOÀN)
+# KHỐI LỆNH before-all GÂY LỖI ĐÃ BỊ XÓA!
 ifneq ($(JAILBROKEN),1)
 before-all::
-	@echo "--- Checking uYou dependencies ---" ; \
-	if [ ! -f $(UYOU_DEB) ]; then \
-		rm -rf $(UYOU_PATH)/* ; \
-		$(PRINT_FORMAT_BLUE) "Downloading uYou" ; \
-	fi ; \
-	if [ ! -f $(UYOU_DEB) -a -n "$(UYOU_URL)" ]; then \
-		curl -s $(UYOU_URL) -o $(UYOU_DEB) ; \
-	fi ; \
-	if [ ! -f $(UYOU_DEB) ]; then \
-		curl -s https://repo.miro92.com/debs/com.miro.uyou_$(UYOU_VERSION)_iphoneos-arm.deb -o $(UYOU_DEB) ; \
-	fi ; \
-	if [ ! -f $(UYOU_DYLIB) -o ! -d $(UYOU_BUNDLE) ]; then \
-		echo "Extracting uYou..." ; \
-		tar -xf Tweaks/uYou/com.miro.uyou_$(UYOU_VERSION)_iphoneos-arm.deb -C Tweaks/uYou ; \
-		tar -xf Tweaks/uYou/data.tar* -C Tweaks/uYou ; \
-		if [ ! -f $(UYOU_DYLIB) -o ! -d $(UYOU_BUNDLE) ]; then \
-			$(PRINT_FORMAT_ERROR) "Failed to extract uYou" ; exit 1 ; \
-		fi ; \
-	fi ; \
-	echo "--- uYou dependencies OK ---"
+	# Logic tải và giải nén đã được chuyển sang GitHub Actions Workflow (buildapp.yml) để tránh lỗi cú pháp Runner
+	@echo "Logic tải uYou.deb đã được xử lý bởi GitHub Actions."
 else
 before-package::
 	@mkdir -p $(THEOS_STAGING_DIR)/Library/Application\ Support; cp -r Localizations/uYouPlus.bundle $(THEOS_STAGING_DIR)/Library/Application\ Support/
