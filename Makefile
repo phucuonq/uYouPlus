@@ -44,7 +44,7 @@ $(TWEAK_NAME)_EMBED_EXTENSIONS = $(wildcard Extensions/*.appex)
 
 include $(THEOS)/makefiles/common.mk
 ifneq ($(JAILBROKEN),1)
-# SUBPROJECTS: Alderis và NoYTPremium (các tweak khác đã được loại bỏ)
+# SUBPROJECTS: Alderis và NoYTPremium
 SUBPROJECTS += Tweaks/Alderis Tweaks/NoYTPremium
 include $(THEOS_MAKE_PATH)/aggregate.mk
 endif
@@ -61,7 +61,7 @@ UYOU_BUNDLE = $(UYOU_PATH)/Library/Application\ Support/uYouBundle.bundle
 internal-clean::
 	@rm -rf $(UYOU_PATH)/*
 
-# ĐÃ SỬA LỖI CÚ PHÁP SHELL: Sử dụng dấu chấm phẩy (;) và gạch chéo ngược (\) rõ ràng hơn.
+# ĐÃ TỐI ƯU HÓA CÚ PHÁP SHELL CHO CI/CD (Khắc phục lỗi "unexpected end of file")
 ifneq ($(JAILBROKEN),1)
 before-all::
 	@if [[ ! -f $(UYOU_DEB) ]]; then \
