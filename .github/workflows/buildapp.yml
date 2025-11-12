@@ -128,6 +128,33 @@ jobs:
           echo "Google Drive ID is: $GDRIVE_ID"
           gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
 
+      - name: Extract uYou Tweak
+        # BƯỚC MỚI: Thực hiện logic giải nén để làm cho Makefile đơn giản
+        run: |
+          cd main
+          UYOU_VERSION="${{ inputs.uyou_version }}"
+          UYOU_PATH="Tweaks/uYou"
+          UYOU_DEB_NAME="com.miro.uyou_${UYOU_VERSION}_iphoneos-arm.deb"
+          
+          echo "Tạo cấu trúc thư mục uYou..."
+          mkdir -p $UYOU_PATH
+          
+          # 1. Di chuyển file deb đã tải vào đúng vị trí
+          mv uYou.deb $UYOU_PATH/$UYOU_DEB_NAME
+          
+          # 2. Giải nén (bắt chước Makefile cũ)
+          cd $UYOU_PATH
+          echo "Giải nén $UYOU_DEB_NAME..."
+          tar -xf $UYOU_DEB_NAME
+          # Giải nén payload data (tạo ra thư mục Library)
+          tar -xf data.tar*
+          
+          # 3. Dọn dẹp
+          rm -f data.tar* control.tar* debian-binary $UYOU_DEB_NAME
+          
+          # Trở lại thư mục chính
+          cd ../..
+
       - name: Prepare YouTube iPA
         id: prepare_youtube
         run: |
