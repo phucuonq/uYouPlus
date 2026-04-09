@@ -10,11 +10,11 @@ on:
         type: string
       uyou_url:
         description: "The Google Drive URL or ID for uYou.deb"
-        default: "11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ"
+        default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
         required: true
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to decrypted YouTube ipa"
+        description: "Direct URL to the decrypted YouTube ipa"
         default: ""
         required: true
         type: string
@@ -28,6 +28,16 @@ on:
         default: "YouTube"
         required: true
         type: string
+      create_release:
+        description: "Create a draft release"
+        default: true
+        required: false
+        type: boolean
+      upload_artifact:
+        description: "Upload Artifact"
+        default: false
+        required: false
+        type: boolean
 
 jobs:
   build:
@@ -41,13 +51,12 @@ jobs:
         uses: actions/checkout@v4.2.1
         with:
           path: main
-          submodules: recursive
+          [cite_start]submodules: recursive # Quan trọng: Để lấy code các tweak chặn quảng cáo [cite: 11]
 
-      - name: Install Dependencies
+      - name: Install brew dependencies
         run: |
           brew install ldid dpkg make python3
           pip3 install gdown --break-system-packages
-          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Setup Theos
         uses: actions/checkout@v4.2.1
@@ -57,57 +66,68 @@ jobs:
           path: theos
           submodules: recursive
 
-      - name: Download iOS 16.5 SDK
-        run: |
-          git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git && cd sdks
-          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
-          git checkout
-          mv *.sdk ../theos/sdks
-        env:
-          THEOS: ${{ github.workspace }}/theos
-
       - name: Setup Theos Jailed
-        run: |
-          git clone --recursive https://github.com/qnblackcat/theos-jailed.git theos-jailed
-          ./theos-jailed/install
+        uses: actions/checkout@v4.2.1
+        with:
+          repository: qnblackcat/theos-jailed
+          ref: master
+          path: theos-jailed
+          submodules: recursive
+
+      - name: Install Theos Jailed
+        run: ./theos-jailed/install
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Prepare uYou and YouTube
+      - name: Prepare uYou.deb
         run: |
-          # Tải uYou.deb
-          gdown "https://drive.google.com/uc?export=download&id=${{ inputs.uyou_url }}" -O main/uYou.deb
-          
-          # Tải và giải nén YouTube IPA
-          gdown "https://drive.google.com/uc?export=download&id=${{ inputs.decrypted_youtube_url }}" -O main/YouTube.ipa
+          if echo "${{ inputs.uyou_url }}" | grep -q 'drive.google.com'; then
+            GDRIVE_ID=$(echo "${{ inputs.uyou_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
+          else
+            GDRIVE_ID="${{ inputs.uyou_url }}"
+          fi
+          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
+
+      - name: Extract uYou Tweak
+        run: |
           cd main
-          unzip -q YouTube.ipa -d Payload_Temp
-          # Tìm thư mục .app bên trong Payload
-          mv Payload_Temp/Payload/YouTube.app Payload/ 2>/dev/null || mv Payload_Temp/*/Payload/YouTube.app Payload/
-          
-          # Lấy version tự động
-          YT_VER=$(defaults read "$(pwd)/Payload/YouTube.app/Info" CFBundleVersion)
-          echo "YT_VER=$YT_VER" >> $GITHUB_ENV
+          mkdir -p Tweaks/uYou
+          mv uYou.deb Tweaks/uYou/uYou.deb
+          cd Tweaks/uYou
+          ar x uYou.deb
+          tar -xf data.tar* # Giải nén để lấy thư mục Library/MobileSubstrate [cite: 10]
+          rm -f *.tar* debian-binary uYou.deb
+
+      - name: Prepare YouTube iPA
+        id: prepare_youtube
+        run: |
+          if echo "${{ inputs.decrypted_youtube_url }}" | grep -q 'drive.google.com'; then
+            GDRIVE_ID=$(echo "${{ inputs.decrypted_youtube_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
+          else
+            GDRIVE_ID="${{ inputs.decrypted_youtube_url }}"
+          fi
+          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/YouTube.ipa
+          cd main
+          unzip -q YouTube.ipa -d temp_ipa || true
+          youtube_version=$(defaults read "$(pwd)/temp_ipa/Payload/YouTube.app/Info" CFBundleVersion)
+          echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
+          cp YouTube.ipa YouTube.zip # Đổi tên để theos-jailed nhận diện
 
       - name: Build Package
         run: |
-          cd main
-          # Truyền mọi tham số trực tiếp vào make, không dùng sed nữa
-          make package THEOS_PACKAGE_SCHEME=rootless \
-            IPA=Payload/YouTube.app \
-            FINALPACKAGE=1 \
-            DISPLAY_NAME="${{ inputs.app_name }}" \
-            BUNDLE_ID="${{ inputs.bundle_id }}" \
-            YOUTUBE_VERSION="${{ env.YT_VER }}" \
-            THEOS=${{ github.workspace }}/theos
+          cd ${{ github.workspace }}/main
+          export THEOS=${{ github.workspace }}/theos
+          # Sửa trực tiếp Makefile để khớp với tham số đầu vào
+          sed -i '' "s/BUNDLE_ID = .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile
+          sed -i '' "s/DISPLAY_NAME = .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile
           
-          echo "PACKAGE_NAME=$(ls packages/*.ipa | head -n1)" >> $GITHUB_ENV
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.YT_VER }}-${{ github.run_number }}
-          name: YouTube v${{ env.YT_VER }} (uYou ${{ inputs.uyou_version }})
-          files: main/packages/*.ipa
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.zip FINALPACKAGE=1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Upload Artifact
+        if: ${{ inputs.upload_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uYouPlus-Built
+          path: main/packages/*.ipa
