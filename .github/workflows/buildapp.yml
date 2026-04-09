@@ -1,126 +1,103 @@
-name: Build and Release uYouPlus
+steps:
 
-on:
-  workflow_dispatch:
-    inputs:
-      uyou_version:
-        description: "Phiên bản uYou"
-        default: "3.0.4"
-        required: true
-        type: string
-      uyou_url:
-        description: "Link Google Drive uYou.deb"
-        default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
-        required: true
-        type: string
-      decrypted_youtube_url:
-        description: "Link Google Drive YouTube IPA đã decrypt"
-        default: "https://drive.google.com/file/d/1pINt0aUNF9efHRkGev5qDluOB8_BrP0s/view?usp=drive_link"
-        required: true
-        type: string
-      bundle_id:
-        description: "Bundle ID (mặc định: com.google.ios.youtube)"
-        default: "com.google.ios.youtube"
-        required: true
-        type: string
-      app_name:
-        description: "Tên ứng phó trên màn hình chính"
-        default: "YouTube"
-        required: true
-        type: string
+  - name: Checkout uYouPlus
+    uses: actions/checkout@v4
+    with:
+      path: main
+      submodules: recursive
 
-jobs:
-  build:
-    name: Build uYouPlus
-    runs-on: macos-latest
-    permissions:
-      contents: write
+  - name: Install Dependencies
+    run: |
+      brew install ldid dpkg make python3
+      pip3 install gdown --break-system-packages
 
-    steps:
-      - name: Checkout Main
-        uses: actions/checkout@v4
-        with:
-          path: main
-          submodules: recursive
+  - name: Setup Theos
+    uses: actions/checkout@v4
+    with:
+      repository: theos/theos
+      path: theos
+      submodules: recursive
 
-      - name: Install Dependencies
-        run: |
-          brew install ldid dpkg make python3
-          pip3 install gdown --break-system-packages
+  - name: Setup Theos Jailed
+    uses: actions/checkout@v4
+    with:
+      repository: qnblackcat/theos-jailed
+      path: theos-jailed
+      submodules: recursive
 
-      - name: Setup Theos
-        uses: actions/checkout@v4
-        with:
-          repository: theos/theos
-          ref: master
-          path: theos
-          submodules: recursive
+  - name: Install Theos Jailed
+    run: ./theos-jailed/install
+    env:
+      THEOS: ${{ github.workspace }}/theos
 
-      - name: Setup Theos Jailed
-        uses: actions/checkout@v4
-        with:
-          repository: qnblackcat/theos-jailed
-          ref: master
-          path: theos-jailed
-          submodules: recursive
+  - name: Download iOS 16.5 SDK
+    run: |
+      mkdir -p $THEOS/sdks
+      curl -L https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz -o sdk.tar.xz
+      
+      SIZE=$(stat -f%z sdk.tar.xz)
+      if [ $SIZE -lt 100000000 ]; then
+        echo "SDK download failed!"
+        exit 1
+      fi
 
-      - name: Install Theos Jailed
-        run: ./theos-jailed/install
-        env:
-          THEOS: ${{ github.workspace }}/theos
+      tar -xJf sdk.tar.xz -C $THEOS/sdks
+      rm sdk.tar.xz
+    env:
+      THEOS: ${{ github.workspace }}/theos
 
-      - name: Download iOS 16.5 SDK
-        run: |
-          mkdir -p $THEOS/sdks
-          curl -L https://github.com/theos/sdks/raw/master/iPhoneOS16.5.sdk.tar.xz -o $THEOS/sdks/iPhoneOS16.5.sdk.tar.xz
-          tar -xf $THEOS/sdks/iPhoneOS16.5.sdk.tar.xz -C $THEOS/sdks/
-          rm $THEOS/sdks/iPhoneOS16.5.sdk.tar.xz
-        env:
-          THEOS: ${{ github.workspace }}/theos
+  - name: Prepare uYou
+    run: |
+      gdown --fuzzy "${{ inputs.uyou_url }}" -O main/uYou.deb
+      cd main
 
-      - name: Prepare uYou.deb
-        run: |
-          # Tự động tìm ID từ link Google Drive
-          gdown --fuzzy "${{ inputs.uyou_url }}" -O main/uYou.deb
-          cd main
-          mkdir -p Tweaks/uYou
-          mv uYou.deb Tweaks/uYou/
-          cd Tweaks/uYou
-          ar x uYou.deb
-          tar -xf data.tar*
-          rm -rf *.tar* debian-binary uYou.deb
+      mkdir -p Tweaks/uYou
+      mv uYou.deb Tweaks/uYou/
 
-      - name: Build IPA
-        run: |
-          cd main
-          export THEOS=${{ github.workspace }}/theos
-          
-          # Tải YouTube IPA bằng chế độ fuzzy để tránh lỗi link view
-          gdown --fuzzy "${{ inputs.decrypted_youtube_url }}" -O YouTube.ipa
-          
-          # Kiểm tra nếu file quá nhỏ (thường là lỗi tải trang HTML thay vì file ipa)
-          FILE_SIZE=$(stat -f%z YouTube.ipa)
-          if [ $FILE_SIZE -lt 10000000 ]; then
-            echo "LỖI: File IPA tải về không hợp lệ (Dung lượng quá nhỏ). Kiểm tra lại quyền chia sẻ link Drive!"
-            exit 1
-          fi
+      cd Tweaks/uYou
+      ar x uYou.deb
+      tar -xf data.tar*
+      rm -rf *.tar* debian-binary uYou.deb
 
-          # Ghi đè cấu hình vào Makefile
-          sed -i '' "s/BUNDLE_ID = .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile
-          sed -i '' "s/DISPLAY_NAME = .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile
-          
-          # Build với toàn bộ nhân CPU hiện có để tăng tốc
-          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.ipa FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
-        env:
-          THEOS: ${{ github.workspace }}/theos
+  - name: Download YouTube IPA
+    run: |
+      cd main
 
-      - name: Upload Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: main/packages/*.ipa
-          tag_name: v${{ github.run_number }}
-          name: "uYouPlus Build v${{ github.run_number }}"
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      gdown --fuzzy "${{ inputs.decrypted_youtube_url }}" -O YouTube.ipa
+
+      SIZE=$(stat -f%z YouTube.ipa)
+      if [ $SIZE -lt 10000000 ]; then
+        echo "IPA download failed!"
+        exit 1
+      fi
+
+  - name: Configure Build
+    run: |
+      cd main
+
+      sed -i '' "s/BUNDLE_ID = .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile
+      sed -i '' "s/DISPLAY_NAME = .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile
+
+  - name: Build IPA
+    run: |
+      cd main
+      export THEOS=${{ github.workspace }}/theos
+
+      make package \
+      THEOS_PACKAGE_SCHEME=rootless \
+      IPA=YouTube.ipa \
+      FINALPACKAGE=1 \
+      -j$(sysctl -n hw.ncpu)
+    env:
+      THEOS: ${{ github.workspace }}/theos
+
+  - name: Upload Release
+    uses: softprops/action-gh-release@v2
+    with:
+      files: main/packages/*.ipa
+      tag_name: v${{ github.run_number }}
+      name: "uYouPlus Build v${{ github.run_number }}"
+      draft: false
+      prerelease: false
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
