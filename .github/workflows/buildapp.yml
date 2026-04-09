@@ -15,7 +15,7 @@ on:
         type: string
       decrypted_youtube_url:
         description: "Link Google Drive YouTube IPA đã decrypt"
-        default: ""
+        default: "https://drive.google.com/file/d/1pINt0aUNF9efHRkGev5qDluOB8_BrP0s/view?usp=drive_link"
         required: true
         type: string
       bundle_id:
