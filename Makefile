@@ -1,72 +1,133 @@
-export TARGET = iphone:clang:16.5:14.0
-export SDK_PATH = $(THEOS)/sdks/iPhoneOS16.5.sdk/
-export SYSROOT = $(SDK_PATH)
-export ARCHS = arm64
+name: Build and Release uYouPlus
 
-export libcolorpicker_ARCHS = arm64
-export Alderis_XCODEOPTS = LD_DYLIB_INSTALL_NAME=@rpath/Alderis.framework/Alderis
-export Alderis_XCODEFLAGS = DYLIB_INSTALL_NAME_BASE=/Library/Frameworks BUILD_LIBRARY_FOR_DISTRIBUTION=YES ARCHS="$(ARCHS)"
-export libcolorpicker_LDFLAGS = -F$(TARGET_PRIVATE_FRAMEWORK_PATH) -install_name @rpath/libcolorpicker.dylib
-export ADDITIONAL_CFLAGS = -I$(THEOS_PROJECT_DIR)/Tweaks/RemoteLog -I$(THEOS_PROJECT_DIR)/Tweaks
+on:
+  workflow_dispatch:
+    inputs:
+      uyou_version:
+        description: "The version of uYou"
+        default: "3.0.4"
+        required: true
+        type: string
+      uyou_url:
+        description: "The Google Drive URL or ID for uYou.deb"
+        default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
+        required: true
+        type: string
+      decrypted_youtube_url:
+        description: "Direct URL to the decrypted YouTube ipa"
+        default: ""
+        required: true
+        type: string
+      bundle_id:
+        description: "Modify the bundle ID"
+        default: "com.google.ios.youtube"
+        required: true
+        type: string
+      app_name:
+        description: "Modify the name of the app"
+        default: "YouTube"
+        required: true
+        type: string
+      create_release:
+        description: "Create a draft release"
+        default: true
+        required: false
+        type: boolean
+      upload_artifact:
+        description: "Upload Artifact"
+        default: false
+        required: false
+        type: boolean
 
-ifneq ($(JAILBROKEN),1)
-export DEBUGFLAG = -ggdb -Wno-unused-command-line-argument -L$(THEOS_OBJ_DIR) -F$(_THEOS_LOCAL_DATA_DIR)/$(THEOS_OBJ_DIR_NAME)/install/Library/Frameworks
-MODULES = jailed
-endif
+jobs:
+  build:
+    name: Build uYouPlus
+    runs-on: macos-latest
+    permissions:
+      contents: write
 
-ifndef YOUTUBE_VERSION
-YOUTUBE_VERSION = 20.13.5
-endif
-ifndef UYOU_VERSION
-UYOU_VERSION = 3.0.4
-endif
-PACKAGE_NAME = $(TWEAK_NAME)
-PACKAGE_VERSION = $(YOUTUBE_VERSION)-$(UYOU_VERSION)
+    steps:
+      - name: Checkout Main
+        uses: actions/checkout@v4.2.1
+        with:
+          path: main
+          [cite_start]submodules: recursive # Quan trọng: Để lấy code các tweak chặn quảng cáo [cite: 11]
 
-INSTALL_TARGET_PROCESSES = YouTube
-TWEAK_NAME = uYouPlus
-DISPLAY_NAME = YouTube
-BUNDLE_ID = com.google.ios.youtube
+      - name: Install brew dependencies
+        run: |
+          brew install ldid dpkg make python3
+          pip3 install gdown --break-system-packages
 
-$(TWEAK_NAME)_FILES := $(wildcard Sources/*.xm) $(wildcard Sources/*.x)
-$(TWEAK_NAME)_FRAMEWORKS = UIKit Security
-$(TWEAK_NAME)_CFLAGS = -fobjc-arc -DTWEAK_VERSION=\"$(PACKAGE_VERSION)\" -Wno-module-import-in-extern-c
+      - name: Setup Theos
+        uses: actions/checkout@v4.2.1
+        with:
+          repository: theos/theos
+          ref: master
+          path: theos
+          submodules: recursive
 
-# TWEAKS CỐT LÕI: uYou (Background Playback) và NoYTPremium (Ad-blocking)
-$(TWEAK_NAME)_INJECT_DYLIBS = Tweaks/uYou/Library/MobileSubstrate/DynamicLibraries/uYou.dylib $(THEOS_OBJ_DIR)/NoYTPremium.dylib $(THEOS_OBJ_DIR)/YouTubeX.dylib
+      - name: Setup Theos Jailed
+        uses: actions/checkout@v4.2.1
+        with:
+          repository: qnblackcat/theos-jailed
+          ref: master
+          path: theos-jailed
+          submodules: recursive
 
-# DEPENDENCIES CỐT LÕI: libcolorpicker và Alderis
-$(TWEAK_NAME)_EMBED_LIBRARIES = $(THEOS_OBJ_DIR)/libcolorpicker.dylib
-$(TWEAK_NAME)_EMBED_FRAMEWORKS = $(_THEOS_LOCAL_DATA_DIR)/$(THEOS_OBJ_DIR_NAME)/install_Alderis.xcarchive/Products/var/jb/Library/Frameworks/Alderis.framework
+      - name: Install Theos Jailed
+        run: ./theos-jailed/install
+        env:
+          THEOS: ${{ github.workspace }}/theos
 
-$(TWEAK_NAME)_EMBED_BUNDLES = $(wildcard Bundles/*.bundle)
-$(TWEAK_NAME)_EMBED_EXTENSIONS = $(wildcard Extensions/*.appex)
+      - name: Prepare uYou.deb
+        run: |
+          if echo "${{ inputs.uyou_url }}" | grep -q 'drive.google.com'; then
+            GDRIVE_ID=$(echo "${{ inputs.uyou_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
+          else
+            GDRIVE_ID="${{ inputs.uyou_url }}"
+          fi
+          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
 
-include $(THEOS)/makefiles/common.mk
-ifneq ($(JAILBROKEN),1)
-# SUBPROJECTS: Alderis và NoYTPremium
-SUBPROJECTS += Tweaks/Alderis Tweaks/NoYTPremium
-include $(THEOS_MAKE_PATH)/aggregate.mk
-endif
-include $(THEOS_MAKE_PATH)/tweak.mk
+      - name: Extract uYou Tweak
+        run: |
+          cd main
+          mkdir -p Tweaks/uYou
+          mv uYou.deb Tweaks/uYou/uYou.deb
+          cd Tweaks/uYou
+          ar x uYou.deb
+          tar -xf data.tar* # Giải nén để lấy thư mục Library/MobileSubstrate [cite: 10]
+          rm -f *.tar* debian-binary uYou.deb
 
-REMOVE_EXTENSIONS = 1
-CODESIGN_IPA = 0
+      - name: Prepare YouTube iPA
+        id: prepare_youtube
+        run: |
+          if echo "${{ inputs.decrypted_youtube_url }}" | grep -q 'drive.google.com'; then
+            GDRIVE_ID=$(echo "${{ inputs.decrypted_youtube_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
+          else
+            GDRIVE_ID="${{ inputs.decrypted_youtube_url }}"
+          fi
+          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/YouTube.ipa
+          cd main
+          unzip -q YouTube.ipa -d temp_ipa || true
+          youtube_version=$(defaults read "$(pwd)/temp_ipa/Payload/YouTube.app/Info" CFBundleVersion)
+          echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
+          cp YouTube.ipa YouTube.zip # Đổi tên để theos-jailed nhận diện
 
-UYOU_PATH = Tweaks/uYou
-UYOU_DEB = $(UYOU_PATH)/com.miro.uyou_$(UYOU_VERSION)_iphoneos-arm.deb
-UYOU_DYLIB = $(UYOU_PATH)/Library/MobileSubstrate/DynamicLibraries/uYou.dylib
-UYOU_BUNDLE = $(UYOU_PATH)/Library/Application\ Support/uYouBundle.bundle
+      - name: Build Package
+        run: |
+          cd ${{ github.workspace }}/main
+          export THEOS=${{ github.workspace }}/theos
+          # Sửa trực tiếp Makefile để khớp với tham số đầu vào
+          sed -i '' "s/BUNDLE_ID = .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile
+          sed -i '' "s/DISPLAY_NAME = .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile
+          
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.zip FINALPACKAGE=1
+        env:
+          THEOS: ${{ github.workspace }}/theos
 
-internal-clean::
-	@rm -rf $(UYOU_PATH)/*
-
-# KHỐI LỆNH before-all GÂY LỖI ĐÃ BỊ XÓA!
-ifneq ($(JAILBROKEN),1)
-before-all::
-	# Logic tải và giải nén đã được chuyển sang GitHub Actions Workflow (buildapp.yml) để tránh lỗi cú pháp Runner
-	@echo "Logic tải uYou.deb đã được xử lý bởi GitHub Actions."
-else
-before-package::
-	@mkdir -p $(THEOS_STAGING_DIR)/Library/Application\ Support; cp -r Localizations/uYouPlus.bundle $(THEOS_STAGING_DIR)/Library/Application\ Support/
-endif
+      - name: Upload Artifact
+        if: ${{ inputs.upload_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uYouPlus-Built
+          path: main/packages/*.ipa
