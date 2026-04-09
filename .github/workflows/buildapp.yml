@@ -10,38 +10,24 @@ on:
         type: string
       uyou_url:
         description: "The Google Drive URL or ID for uYou.deb"
-        default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
+        default: "11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ"
         required: true
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to the decrypted YouTube ipa. The version of YouTube will be detected automatically."
+        description: "Direct URL to decrypted YouTube ipa"
         default: ""
         required: true
         type: string
       bundle_id:
-        description: "Modify the bundle ID. Not recommended"
+        description: "Modify the bundle ID"
         default: "com.google.ios.youtube"
         required: true
         type: string
       app_name:
-        description: "Modify the name of the app on the Home Screen. Not recommended"
+        description: "Modify the name of the app"
         default: "YouTube"
         required: true
         type: string
-      create_release:
-        description: "Create a draft release"
-        default: true
-        required: false
-        type: boolean
-      upload_artifact:
-        description: "Upload Artifact"
-        default: false
-        required: false
-        type: boolean
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -57,23 +43,11 @@ jobs:
           path: main
           submodules: recursive
 
-      - name: Caching brew dependencies
-        id: brew_cache
-        uses: tecolicom/actions-use-homebrew-tools@v1.2
-        with:
-          tools: ldid dpkg make python3
-          cache: yes
-      - name: Install gdown
-        run: pip3 install gdown --break-system-packages
-
       - name: Install Dependencies
-        if: steps.brew_cache.outputs.cache-hit != 'true'
         run: |
           brew install ldid dpkg make python3
-          
-
-      - name: Set PATH environment variable
-        run: echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          pip3 install gdown --break-system-packages
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Setup Theos
         uses: actions/checkout@v4.2.1
@@ -83,167 +57,57 @@ jobs:
           path: theos
           submodules: recursive
 
-      - name: Caching SDK
-        id: SDK
-        uses: actions/cache@v4
-        env:
-          cache-name: iOS-16.5-SDK
-        with:
-          path: theos/sdks/
-          key: ${{ env.cache-name }}
-
       - name: Download iOS 16.5 SDK
-        if: steps.SDK.outputs.cache-hit != 'true'
         run: |
           git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git && cd sdks
           git sparse-checkout set --no-cone iPhoneOS16.5.sdk
           git checkout
-          mv *.sdk $THEOS/sdks
+          mv *.sdk ../theos/sdks
         env:
           THEOS: ${{ github.workspace }}/theos
 
       - name: Setup Theos Jailed
-        uses: actions/checkout@v4.2.1
-        with:
-          repository: qnblackcat/theos-jailed
-          ref: master
-          path: theos-jailed
-          submodules: recursive
-
-      - name: Install Theos Jailed
         run: |
+          git clone --recursive https://github.com/qnblackcat/theos-jailed.git theos-jailed
           ./theos-jailed/install
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Prepare uYou.deb from Google Drive
-        id: prepare_deb
+      - name: Prepare uYou and YouTube
         run: |
-          echo "Input URL: ${{ inputs.uyou_url }}"
-          if echo "${{ inputs.uyou_url }}" | grep -q 'drive.google.com'; then
-            GDRIVE_ID=$(echo "${{ inputs.uyou_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
-          else
-            GDRIVE_ID="${{ inputs.uyou_url }}"
-          fi
-          echo "Google Drive ID is: $GDRIVE_ID"
-          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
+          # Tải uYou.deb
+          gdown "https://drive.google.com/uc?export=download&id=${{ inputs.uyou_url }}" -O main/uYou.deb
+          
+          # Tải và giải nén YouTube IPA
+          gdown "https://drive.google.com/uc?export=download&id=${{ inputs.decrypted_youtube_url }}" -O main/YouTube.ipa
+          cd main
+          unzip -q YouTube.ipa -d Payload_Temp
+          # Tìm thư mục .app bên trong Payload
+          mv Payload_Temp/Payload/YouTube.app Payload/ 2>/dev/null || mv Payload_Temp/*/Payload/YouTube.app Payload/
+          
+          # Lấy version tự động
+          YT_VER=$(defaults read "$(pwd)/Payload/YouTube.app/Info" CFBundleVersion)
+          echo "YT_VER=$YT_VER" >> $GITHUB_ENV
 
-      - name: Extract uYou Tweak
-        # BƯỚC MỚI: Thực hiện logic giải nén để làm cho Makefile đơn giản
+      - name: Build Package
         run: |
           cd main
-          UYOU_VERSION="${{ inputs.uyou_version }}"
-          UYOU_PATH="Tweaks/uYou"
-          UYOU_DEB_NAME="com.miro.uyou_${UYOU_VERSION}_iphoneos-arm.deb"
+          # Truyền mọi tham số trực tiếp vào make, không dùng sed nữa
+          make package THEOS_PACKAGE_SCHEME=rootless \
+            IPA=Payload/YouTube.app \
+            FINALPACKAGE=1 \
+            DISPLAY_NAME="${{ inputs.app_name }}" \
+            BUNDLE_ID="${{ inputs.bundle_id }}" \
+            YOUTUBE_VERSION="${{ env.YT_VER }}" \
+            THEOS=${{ github.workspace }}/theos
           
-          echo "Tạo cấu trúc thư mục uYou..."
-          mkdir -p $UYOU_PATH
-          
-          # 1. Di chuyển file deb đã tải vào đúng vị trí
-          mv uYou.deb $UYOU_PATH/$UYOU_DEB_NAME
-          
-          # 2. Giải nén (bắt chước Makefile cũ)
-          cd $UYOU_PATH
-          echo "Giải nén $UYOU_DEB_NAME..."
-          tar -xf $UYOU_DEB_NAME
-          # Giải nén payload data (tạo ra thư mục Library)
-          tar -xf data.tar*
-          
-          # 3. Dọn dẹp
-          rm -f data.tar* control.tar* debian-binary $UYOU_DEB_NAME
-          
-          # Trở lại thư mục chính
-          cd ../..
-
-      - name: Prepare YouTube iPA
-        id: prepare_youtube
-        run: |
-          echo "Input YouTube URL: ${{ inputs.decrypted_youtube_url }}"
-          if echo "${{ inputs.decrypted_youtube_url }}" | grep -q 'drive.google.com'; then
-            GDRIVE_ID=$(echo "${{ inputs.decrypted_youtube_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
-          else
-            GDRIVE_ID="${{ inputs.decrypted_youtube_url }}"
-          fi
-          echo "Google Drive ID is: $GDRIVE_ID"
-          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/YouTube.ipa
-
-          FILE_TYPE=$(file --brief --mime-type main/YouTube.ipa)
-          echo "Detected YouTube file type: $FILE_TYPE"
-
-          if [[ "$FILE_TYPE" == "application/zip" ]]; then
-            echo "File is zip, extracting..."
-            unzip -q main/YouTube.ipa -d main/unzipped_ipa/
-            IPA_FOUND=$(find main/unzipped_ipa/ -name "*.ipa" | head -n1)
-            if [[ -n "$IPA_FOUND" ]]; then
-              mv "$IPA_FOUND" main/YouTube.ipa
-            else
-              echo "No .ipa found, trying Payload fallback..."
-              mv main/YouTube.ipa main/YouTube.zip
-              unzip -q main/YouTube.zip -d main/
-            fi
-          else
-            cd main
-            mv YouTube.ipa YouTube.zip
-            unzip -q YouTube.zip
-          fi
-
-          youtube_version=$(defaults read "$(pwd)/main/Payload/YouTube.app/Info" CFBundleVersion)
-          echo "==> YouTube v$youtube_version downloaded!"
-          sed -i '' "17s#.*#YOUTUBE_VERSION = ${youtube_version}#g" main/Makefile
-          echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
-        env:
-          THEOS: ${{ github.workspace }}/theos
-          YOUTUBE_URL: ${{ inputs.decrypted_youtube_url }}
-
-      - name: Fix compiling & Build Package
-        id: build_package
-        run: |
-          mkdir -p ${{ github.workspace }}/theos/lib/iphone/rootless
-          
-          # Tối ưu hóa lệnh cd và make để tránh lỗi Runner
-          cd ${{ github.workspace }}/main
-          sed -i '' "27s#.*#BUNDLE_ID = ${{ inputs.bundle_id }}#g" Makefile
-          sed -i '' "26s#.*#DISPLAY_NAME = ${{ inputs.app_name }}#g" Makefile
-          
-          # Lệnh make được truyền biến môi trường tường minh
-          make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 \
-          UYOU_VERSION="${{ inputs.uyou_version }}" \
-          UYOU_URL="${{ inputs.uyou_url }}" \
-          BUNDLE_ID="${{ inputs.bundle_id }}" \
-          APP_NAME="${{ inputs.app_name }}" \
-          THEOS="${{ github.workspace }}/theos"
-          
-          echo "package=$(ls -t packages | head -n1)" >>$GITHUB_OUTPUT
-          echo -e "==> \033[1mSHASUM256: $(shasum -a 256 packages/*.ipa | cut -f1 -d' ')\033[0m"
-          echo -e "==> \033[1mBundle ID: ${{ inputs.bundle_id }}\033[0m"
-        env:
-          THEOS: ${{ github.workspace }}/theos
-          UYOU_VERSION: ${{ inputs.uyou_version }}
-          UYOU_URL: ${{ inputs.uyou_url }}
-          BUNDLE_ID: ${{ inputs.bundle_id }}
-          APP_NAME: ${{ inputs.app_name }}
-
-      - name: Upload Artifact
-        if: ${{ inputs.upload_artifact }}
-        uses: actions/upload-artifact@v4.4.3
-        env:
-          UYOU_VERSION: ${{ inputs.uyou_version }}
-          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
-        with:
-          name: uYouPlus_${{ env.YOUTUBE_VERSION }}_${{ env.UYOU_VERSION }}
-          path: ${{ github.workspace }}/main/packages/${{ steps.build_package.outputs.package }}
-          if-no-files-found: error
+          echo "PACKAGE_NAME=$(ls packages/*.ipa | head -n1)" >> $GITHUB_ENV
 
       - name: Create Release
-        id: create_release
-        uses: qnblackcat/action-gh-release@master
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.YT_VER }}-${{ github.run_number }}
+          name: YouTube v${{ env.YT_VER }} (uYou ${{ inputs.uyou_version }})
+          files: main/packages/*.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UYOU_VERSION: ${{ inputs.uyou_version }}
-          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
-          DRAFT: ${{ inputs.create_release }}
-        with:
-          tag_name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
-          name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
-          files: main/packages/*.ipa
-          draft: ${{ env.DRAFT }}
