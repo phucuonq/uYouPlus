@@ -14,7 +14,7 @@ on:
         required: true
         type: string
       decrypted_youtube_url:
-        description: "Link trực tiếp YouTube IPA đã decrypt"
+        description: "Link Google Drive YouTube IPA đã decrypt"
         default: ""
         required: true
         type: string
@@ -24,7 +24,7 @@ on:
         required: true
         type: string
       app_name:
-        description: "Tên ứng dụng trên màn hình chính"
+        description: "Tên ứng phó trên màn hình chính"
         default: "YouTube"
         required: true
         type: string
@@ -69,14 +69,19 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
+      - name: Download iOS 16.5 SDK
+        run: |
+          mkdir -p $THEOS/sdks
+          curl -L https://github.com/theos/sdks/raw/master/iPhoneOS16.5.sdk.tar.xz -o $THEOS/sdks/iPhoneOS16.5.sdk.tar.xz
+          tar -xf $THEOS/sdks/iPhoneOS16.5.sdk.tar.xz -C $THEOS/sdks/
+          rm $THEOS/sdks/iPhoneOS16.5.sdk.tar.xz
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
       - name: Prepare uYou.deb
         run: |
-          GDRIVE_URL="${{ inputs.uyou_url }}"
-          GDRIVE_ID=$(echo "$GDRIVE_URL" | grep -o 'd/[^/]*' | cut -d'/' -f2 || echo "$GDRIVE_URL")
-          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
-
-      - name: Extract uYou
-        run: |
+          # Tự động tìm ID từ link Google Drive
+          gdown --fuzzy "${{ inputs.uyou_url }}" -O main/uYou.deb
           cd main
           mkdir -p Tweaks/uYou
           mv uYou.deb Tweaks/uYou/
@@ -89,13 +94,23 @@ jobs:
         run: |
           cd main
           export THEOS=${{ github.workspace }}/theos
-          # Lệnh này sẽ nạp YouTube IPA từ link bạn nhập vào
-          gdown "${{ inputs.decrypted_youtube_url }}" -O YouTube.ipa
-          # Sửa Makefile trực tiếp để nhận diện Bundle ID và App Name
+          
+          # Tải YouTube IPA bằng chế độ fuzzy để tránh lỗi link view
+          gdown --fuzzy "${{ inputs.decrypted_youtube_url }}" -O YouTube.ipa
+          
+          # Kiểm tra nếu file quá nhỏ (thường là lỗi tải trang HTML thay vì file ipa)
+          FILE_SIZE=$(stat -f%z YouTube.ipa)
+          if [ $FILE_SIZE -lt 10000000 ]; then
+            echo "LỖI: File IPA tải về không hợp lệ (Dung lượng quá nhỏ). Kiểm tra lại quyền chia sẻ link Drive!"
+            exit 1
+          fi
+
+          # Ghi đè cấu hình vào Makefile
           sed -i '' "s/BUNDLE_ID = .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile
           sed -i '' "s/DISPLAY_NAME = .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile
           
-          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.ipa FINALPACKAGE=1
+          # Build với toàn bộ nhân CPU hiện có để tăng tốc
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.ipa FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
         env:
           THEOS: ${{ github.workspace }}/theos
 
@@ -104,5 +119,8 @@ jobs:
         with:
           files: main/packages/*.ipa
           tag_name: v${{ github.run_number }}
+          name: "uYouPlus Build v${{ github.run_number }}"
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
