@@ -10,10 +10,12 @@ on:
         type: string
       uyou_url:
         description: "Link Google Drive uYou.deb"
+        default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
         required: true
         type: string
       decrypted_youtube_url:
         description: "Link Google Drive YouTube IPA đã decrypt"
+        default: "https://drive.google.com/file/d/1pINt0aUNF9efHRkGev5qDluOB8_BrP0s/view?usp=drive_link"
         required: true
         type: string
       bundle_id:
