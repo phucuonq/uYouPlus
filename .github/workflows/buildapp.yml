@@ -4,40 +4,30 @@ on:
   workflow_dispatch:
     inputs:
       uyou_version:
-        description: "The version of uYou"
+        description: "Phiên bản uYou"
         default: "3.0.4"
         required: true
         type: string
       uyou_url:
-        description: "The Google Drive URL or ID for uYou.deb"
+        description: "Link Google Drive uYou.deb"
         default: "https://drive.google.com/file/d/11P6gI28Q5dsDgcbkxN8v3Q-2RLfKi1LZ/view?usp=drivesdk"
         required: true
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to the decrypted YouTube ipa"
+        description: "Link trực tiếp YouTube IPA đã decrypt"
         default: ""
         required: true
         type: string
       bundle_id:
-        description: "Modify the bundle ID"
+        description: "Bundle ID (mặc định: com.google.ios.youtube)"
         default: "com.google.ios.youtube"
         required: true
         type: string
       app_name:
-        description: "Modify the name of the app"
+        description: "Tên ứng dụng trên màn hình chính"
         default: "YouTube"
         required: true
         type: string
-      create_release:
-        description: "Create a draft release"
-        default: true
-        required: false
-        type: boolean
-      upload_artifact:
-        description: "Upload Artifact"
-        default: false
-        required: false
-        type: boolean
 
 jobs:
   build:
@@ -48,18 +38,18 @@ jobs:
 
     steps:
       - name: Checkout Main
-        uses: actions/checkout@v4.2.1
+        uses: actions/checkout@v4
         with:
           path: main
-          [cite_start]submodules: recursive # Quan trọng: Để lấy code các tweak chặn quảng cáo [cite: 11]
+          submodules: recursive
 
-      - name: Install brew dependencies
+      - name: Install Dependencies
         run: |
           brew install ldid dpkg make python3
           pip3 install gdown --break-system-packages
 
       - name: Setup Theos
-        uses: actions/checkout@v4.2.1
+        uses: actions/checkout@v4
         with:
           repository: theos/theos
           ref: master
@@ -67,7 +57,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Theos Jailed
-        uses: actions/checkout@v4.2.1
+        uses: actions/checkout@v4
         with:
           repository: qnblackcat/theos-jailed
           ref: master
@@ -81,53 +71,38 @@ jobs:
 
       - name: Prepare uYou.deb
         run: |
-          if echo "${{ inputs.uyou_url }}" | grep -q 'drive.google.com'; then
-            GDRIVE_ID=$(echo "${{ inputs.uyou_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
-          else
-            GDRIVE_ID="${{ inputs.uyou_url }}"
-          fi
+          GDRIVE_URL="${{ inputs.uyou_url }}"
+          GDRIVE_ID=$(echo "$GDRIVE_URL" | grep -o 'd/[^/]*' | cut -d'/' -f2 || echo "$GDRIVE_URL")
           gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/uYou.deb
 
-      - name: Extract uYou Tweak
+      - name: Extract uYou
         run: |
           cd main
           mkdir -p Tweaks/uYou
-          mv uYou.deb Tweaks/uYou/uYou.deb
+          mv uYou.deb Tweaks/uYou/
           cd Tweaks/uYou
           ar x uYou.deb
-          tar -xf data.tar* # Giải nén để lấy thư mục Library/MobileSubstrate [cite: 10]
-          rm -f *.tar* debian-binary uYou.deb
+          tar -xf data.tar*
+          rm -rf *.tar* debian-binary uYou.deb
 
-      - name: Prepare YouTube iPA
-        id: prepare_youtube
+      - name: Build IPA
         run: |
-          if echo "${{ inputs.decrypted_youtube_url }}" | grep -q 'drive.google.com'; then
-            GDRIVE_ID=$(echo "${{ inputs.decrypted_youtube_url }}" | grep -o 'd/[^/]*' | cut -d'/' -f2)
-          else
-            GDRIVE_ID="${{ inputs.decrypted_youtube_url }}"
-          fi
-          gdown "https://drive.google.com/uc?export=download&id=$GDRIVE_ID" -O main/YouTube.ipa
           cd main
-          unzip -q YouTube.ipa -d temp_ipa || true
-          youtube_version=$(defaults read "$(pwd)/temp_ipa/Payload/YouTube.app/Info" CFBundleVersion)
-          echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
-          cp YouTube.ipa YouTube.zip # Đổi tên để theos-jailed nhận diện
-
-      - name: Build Package
-        run: |
-          cd ${{ github.workspace }}/main
           export THEOS=${{ github.workspace }}/theos
-          # Sửa trực tiếp Makefile để khớp với tham số đầu vào
+          # Lệnh này sẽ nạp YouTube IPA từ link bạn nhập vào
+          gdown "${{ inputs.decrypted_youtube_url }}" -O YouTube.ipa
+          # Sửa Makefile trực tiếp để nhận diện Bundle ID và App Name
           sed -i '' "s/BUNDLE_ID = .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile
           sed -i '' "s/DISPLAY_NAME = .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile
           
-          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.zip FINALPACKAGE=1
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=YouTube.ipa FINALPACKAGE=1
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Upload Artifact
-        if: ${{ inputs.upload_artifact }}
-        uses: actions/upload-artifact@v4
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: uYouPlus-Built
-          path: main/packages/*.ipa
+          files: main/packages/*.ipa
+          tag_name: v${{ github.run_number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
